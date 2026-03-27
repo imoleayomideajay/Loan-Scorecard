@@ -19,7 +19,7 @@ import streamlit as st
 # -------------------------------
 # APP CONFIG
 # -------------------------------
-APP_NAME = "Credit Decisioning Platform"
+APP_NAME = "AB Microfinance Privacy-Aware Credit Decisioning Platform"
 APP_VERSION = "2.0.0-single-file-phase4"
 
 OUTPUT_DIR = "outputs"
@@ -570,9 +570,12 @@ def decision_donut(df: pd.DataFrame):
 
 def score_histogram(df: pd.DataFrame):
     if df.empty or "total_score" not in df.columns:
-        return px.histogram(pd.DataFrame({"total_score": []}), x="total_score")
+        fig = px.histogram(pd.DataFrame({"total_score": []}), x="total_score")
+        fig.update_yaxes(dtick=1, rangemode="tozero")
+        return fig
     fig = px.histogram(df, x="total_score", nbins=15)
     fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=360)
+    fig.update_yaxes(dtick=1, rangemode="tozero", tickformat=",d")
     return fig
 
 
@@ -607,7 +610,9 @@ def score_gauge(score: int, approve_cutoff: int, refer_cutoff: int):
 
 def decline_reason_bar(df: pd.DataFrame):
     if df.empty:
-        return px.bar(pd.DataFrame({"reason": [], "count": []}), x="reason", y="count")
+        fig = px.bar(pd.DataFrame({"reason": [], "count": []}), x="reason", y="count")
+        fig.update_yaxes(dtick=1, rangemode="tozero")
+        return fig
     reasons = []
     for item in df["reject_reasons"].fillna(""):
         for part in [x.strip() for x in str(item).split("|") if x.strip()]:
@@ -619,6 +624,7 @@ def decline_reason_bar(df: pd.DataFrame):
         reason_df.columns = ["reason", "count"]
     fig = px.bar(reason_df, x="reason", y="count")
     fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=360, xaxis_title="Decline reason")
+    fig.update_yaxes(dtick=1, rangemode="tozero", tickformat=",d")
     return fig
 
 
@@ -636,21 +642,27 @@ def branch_approval_rate(df: pd.DataFrame):
 
 def bureau_mix_chart(df: pd.DataFrame):
     if df.empty:
-        return px.histogram(pd.DataFrame({"bureau_flag": []}), x="bureau_flag")
+        fig = px.histogram(pd.DataFrame({"bureau_flag": []}), x="bureau_flag")
+        fig.update_yaxes(dtick=1, rangemode="tozero")
+        return fig
     plot_df = df.groupby(["bureau_flag", "final_decision"], as_index=False).size()
     fig = px.bar(plot_df, x="bureau_flag", y="size", color="final_decision", barmode="group",
                  color_discrete_map=DECISION_COLORS)
     fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=360, yaxis_title="Applications")
+    fig.update_yaxes(dtick=1, rangemode="tozero", tickformat=",d")
     return fig
 
 
 def override_by_user_chart(df: pd.DataFrame):
     if df.empty:
-        return px.bar(pd.DataFrame({"override_user": [], "count": []}), x="override_user", y="count")
+        fig = px.bar(pd.DataFrame({"override_user_id": [], "count": []}), x="override_user_id", y="count")
+        fig.update_yaxes(dtick=1, rangemode="tozero")
+        return fig
     plot_df = df["override_user_id"].value_counts().reset_index()
     plot_df.columns = ["override_user_id", "count"]
     fig = px.bar(plot_df, x="override_user_id", y="count")
     fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=360)
+    fig.update_yaxes(dtick=1, rangemode="tozero", tickformat=",d")
     return fig
 
 # -------------------------------
