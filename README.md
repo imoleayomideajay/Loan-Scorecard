@@ -7,11 +7,6 @@ Single-file Streamlit app for:
 - audit trail
 - advanced analytics
 
-## Run locally
-```bash
-pip install -r requirements.txt
-streamlit run Judgmental_Scorecard_App.py
-
 
 # Data Privacy and Ethical AI
 
@@ -31,3 +26,10 @@ This project has been designed with privacy-by-design and ethical AI principles 
 
 ### Disclaimer
 This tool is a decision-support system and does not replace human credit judgment.
+
+
+## Run locally
+```bash
+pip install -r requirements.txt
+streamlit run Judgmental_Scorecard_App.py
+
