@@ -719,13 +719,10 @@ st.sidebar.caption(f"{APP_NAME}\nVersion: {APP_VERSION}")
 # -------------------------------
 # PAGE: DASHBOARD
 # -------------------------------
+ st.markdown("<br>", unsafe_allow_html=True)  # adds vertical space
 if page == "Dashboard":
-    page_header(
-    "Portfolio Dashboard",
-    "Executive summary of scored applications, decisions, overrides, and portfolio mix."
-)
-
-st.markdown("<br>", unsafe_allow_html=True)  # adds vertical space
+    page_header("Portfolio Dashboard",
+    "Executive summary of scored applications, decisions, overrides, and portfolio mix.")
     df = load_table(SCORED_APPLICATIONS_FILE, SCORED_COLUMNS)
     overrides_df = load_table(OVERRIDE_LOG_FILE, OVERRIDE_COLUMNS)
 
