@@ -276,7 +276,6 @@ def score_gauge(score: int, approve_cutoff: int, refer_cutoff: int):
 # -------------------------------------------------------------------
 # services/rule_loader.py
 # -------------------------------------------------------------------
-from __future__ import annotations
 import yaml
 from typing import Any, Dict
 
@@ -311,7 +310,6 @@ def validate_application(data: Dict[str, Any]) -> List[str]:
 # -------------------------------------------------------------------
 # services/scorer.py
 # -------------------------------------------------------------------
-from __future__ import annotations
 from typing import Dict, Any, List
 
 
@@ -406,7 +404,6 @@ def explain_result(component_scores: Dict[str, int], reject_reasons: List[str]) 
 # -------------------------------------------------------------------
 # services/repository.py
 # -------------------------------------------------------------------
-from __future__ import annotations
 import os
 import pandas as pd
 from datetime import datetime
@@ -819,4 +816,1018 @@ APP-0902,Ibadan Central,M. Bello,24,70000,Informal business,8,10,Minor issues,35
 APP-0903,Abuja South,T. Okonkwo,41,220000,Government salaried,36,48,Clean,18,Strong,Regular,Verified and consistent,42,119,Approve,Low Risk,,2026-03-25T11:45:00
 APP-0904,Kano Metro,R. Musa,29,95000,Self-employed formal,14,15,Serious delinquency,52,Moderate,Irregular,Verified and consistent,16,50,Decline,High Risk,Credit bureau shows serious delinquency.,2026-03-25T13:20:00
 APP-0905,Port Harcourt,G. Uche,35,120000,Private salaried,18,20,No bureau history,28,Moderate,Regular,Verified with minor mismatch,20,81,Refer,Medium Risk,,2026-03-25T14:05:00
+"""
+
+# -------------------------------------------------------------------
+# DEPLOYMENT GUIDE
+# -------------------------------------------------------------------
+"""
+1. Create the folder structure exactly as shown above.
+2. Save each section into its corresponding file.
+3. Install dependencies:
+   pip install -r requirements.txt
+4. Start the application:
+   streamlit run app.py
+5. Streamlit will automatically detect the pages/ directory and build multi-page navigation.
+
+Recommended hosting:
+- Streamlit Community Cloud for early internal demos
+- Render, Azure App Service, or an internal VM for controlled institutional deployment
+"""
+
+# -------------------------------------------------------------------
+# MAINTENANCE GUIDE
+# -------------------------------------------------------------------
+"""
+1. Policy changes should be made in rules/scorecard.yaml, not in UI files.
+2. Validate all scorecard edits in a test environment before production use.
+3. Back up outputs/scored_applications.csv regularly or replace it with a database in later phases.
+4. Review cut-offs and hard reject rules periodically against realised repayment performance.
+5. Add authentication, override logging, and audit trail controls in the next build phases.
+"""
+
+# -------------------------------------------------------------------
+# PHASE 1 ARCHITECTURE DECISIONS
+# -------------------------------------------------------------------
+"""
+1. Multi-page Streamlit layout was chosen because it gives immediate product structure without forcing a monolithic file design.
+2. Score rules were externalised into YAML to support policy governance and future version control.
+3. The scoring engine, validators, explainability logic, and repository layer were separated to improve maintainability and later API portability.
+4. Plotly was used for premium interactive visuals, particularly the score gauge and dashboard charts.
+5. A lightweight CSV repository was retained for Phase 1 simplicity, but isolated behind repository functions so it can later be replaced by SQL with minimal disruption.
+"""
+
+# -------------------------------------------------------------------
+# PHASE 1 RISK AND GOVERNANCE CONSIDERATIONS
+# -------------------------------------------------------------------
+"""
+1. This remains a judgmental scorecard and therefore requires formal policy approval before operational use.
+2. The current persistence layer is appropriate for prototyping and controlled internal demonstration, not full production governance.
+3. Duplicate application handling is currently a warning only; later phases should implement stronger entity resolution and case management.
+4. No user authentication or role-based access control is included yet; that must be added before production deployment.
+5. Override workflows and immutable audit trails are not yet complete and are planned for later phases.
+"""
+
+# ================================
+# PHASE 2 UPGRADE
+# Batch Scoring + Validation + Exception Reporting
+# Enterprise Credit Decisioning Platform
+# ================================
+
+# -------------------------------------------------------------------
+# PROJECT STRUCTURE
+# -------------------------------------------------------------------
+"""
+credit_decisioning_app/
+│
+├── app.py
+├── config.py
+├── requirements.txt
+│
+├── components/
+│   ├── ui_cards.py
+│   ├── charts.py
+│   └── styles.py
+│
+├── pages/
+│   ├── 1_Dashboard.py
+│   ├── 2_New_Application.py
+│   └── 3_Batch_Scoring.py
+│
+├── services/
+│   ├── rule_loader.py
+│   ├── scorer.py
+│   ├── validators.py
+│   ├── explainability.py
+│   ├── repository.py
+│   └── batch_processor.py
+│
+├── rules/
+│   └── scorecard.yaml
+│
+├── data/
+│   ├── sample_scored_applications.csv
+│   └── sample_batch_applications.csv
+│
+└── outputs/
+    ├── scored_applications.csv
+    ├── batch_scored_output.csv
+    └── batch_exceptions_output.csv
+"""
+
+# -------------------------------------------------------------------
+# config.py (additions)
+# -------------------------------------------------------------------
+BATCH_SCORED_OUTPUT_FILE = "outputs/batch_scored_output.csv"
+BATCH_EXCEPTION_OUTPUT_FILE = "outputs/batch_exceptions_output.csv"
+
+REQUIRED_BATCH_COLUMNS = [
+    "application_id",
+    "branch",
+    "officer_name",
+    "age",
+    "monthly_net_income",
+    "employment_type",
+    "employment_tenure_months",
+    "residence_stability_months",
+    "bureau_flag",
+    "existing_obligations_ratio",
+    "account_turnover_strength",
+    "savings_behaviour",
+    "bvn_verification",
+    "bank_account_vintage_months",
+]
+
+# -------------------------------------------------------------------
+# services/validators.py (additions)
+# -------------------------------------------------------------------
+from typing import Dict, Any, List
+import pandas as pd
+
+
+def validate_batch_schema(df: pd.DataFrame, required_columns: List[str]) -> List[str]:
+    missing = [c for c in required_columns if c not in df.columns]
+    if missing:
+        return [f"Missing required columns: {', '.join(missing)}"]
+    return []
+
+
+def validate_categorical_values(data: Dict[str, Any], rules: Dict[str, Any]) -> List[str]:
+    errors = []
+    sv = rules["score_variables"]
+
+    categorical_checks = {
+        "employment_type": list(sv["employment_type"].keys()),
+        "bureau_flag": list(sv["bureau_flag"].keys()),
+        "account_turnover_strength": list(sv["account_turnover_strength"].keys()),
+        "savings_behaviour": list(sv["savings_behaviour"].keys()),
+        "bvn_verification": list(sv["bvn_verification"].keys()),
+    }
+
+    for field, valid_values in categorical_checks.items():
+        if data.get(field) not in valid_values:
+            errors.append(f"{field} has invalid value: {data.get(field)}")
+
+    return errors
+
+# -------------------------------------------------------------------
+# services/repository.py (additions)
+# -------------------------------------------------------------------
+
+def write_dataframe(path: str, df: pd.DataFrame) -> None:
+    ensure_store(path)
+    df.to_csv(path, index=False)
+
+# -------------------------------------------------------------------
+# services/batch_processor.py
+# -------------------------------------------------------------------
+import pandas as pd
+from typing import Dict, Any, Tuple, List
+from services.validators import validate_application, validate_batch_schema, validate_categorical_values
+from services.scorer import compute_score
+
+
+def process_batch(df: pd.DataFrame, rules: Dict[str, Any], required_columns: List[str]) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
+    schema_errors = validate_batch_schema(df, required_columns)
+    if schema_errors:
+        raise ValueError(" | ".join(schema_errors))
+
+    scored_rows: List[Dict[str, Any]] = []
+    exception_rows: List[Dict[str, Any]] = []
+    seen_ids = set()
+
+    for idx, row in df.iterrows():
+        record = row.to_dict()
+        row_num = idx + 2
+        app_id = str(record.get("application_id", "")).strip()
+
+        row_errors = []
+        if not app_id:
+            row_errors.append("application_id is missing")
+        if app_id in seen_ids:
+            row_errors.append("duplicate application_id within upload")
+        seen_ids.add(app_id)
+
+        row_errors.extend(validate_application(record))
+        row_errors.extend(validate_categorical_values(record, rules))
+
+        if row_errors:
+            exception_rows.append({
+                **record,
+                "row_number": row_num,
+                "error_type": "validation_error",
+                "error_details": " | ".join(row_errors),
+            })
+            continue
+
+        result = compute_score(record, rules)
+        scored_rows.append({
+            **record,
+            "row_number": row_num,
+            "total_score": result["total_score"],
+            "decision": result["decision"],
+            "risk_band": result["risk_band"],
+            "reject_reasons": " | ".join(result["reject_reasons"]),
+            "recommendation": result["recommendation"],
+        })
+
+    scored_df = pd.DataFrame(scored_rows)
+    exceptions_df = pd.DataFrame(exception_rows)
+
+    summary = {
+        "rows_uploaded": len(df),
+        "rows_scored": len(scored_df),
+        "rows_failed": len(exceptions_df),
+        "approvals": int((scored_df["decision"] == "Approve").sum()) if not scored_df.empty else 0,
+        "referrals": int((scored_df["decision"] == "Refer").sum()) if not scored_df.empty else 0,
+        "declines": int((scored_df["decision"] == "Decline").sum()) if not scored_df.empty else 0,
+        "average_score": round(scored_df["total_score"].mean(), 1) if not scored_df.empty else 0,
+    }
+
+    return scored_df, exceptions_df, summary
+
+# -------------------------------------------------------------------
+# pages/3_Batch_Scoring.py
+# -------------------------------------------------------------------
+import io
+import pandas as pd
+import streamlit as st
+from components.styles import inject_global_styles
+from components.ui_cards import page_header, kpi_card
+from components.charts import decision_donut, score_histogram
+from services.rule_loader import load_rules
+from services.batch_processor import process_batch
+from services.repository import write_dataframe, append_scored_application, load_scored_applications
+from config import (
+    RULE_FILE,
+    REQUIRED_BATCH_COLUMNS,
+    BATCH_SCORED_OUTPUT_FILE,
+    BATCH_EXCEPTION_OUTPUT_FILE,
+    SCORED_APPLICATIONS_FILE,
+)
+
+st.set_page_config(page_title="Batch Scoring", page_icon="📂", layout="wide")
+inject_global_styles()
+page_header(
+    "Batch Scoring",
+    "Upload multiple loan applications, validate the dataset, score valid rows, and produce exception reports for failed records.",
+)
+
+rules = load_rules(RULE_FILE)
+
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
+st.subheader("Upload input file")
+st.write("Supported formats: CSV and Excel (.xlsx). The file must contain all mandatory scorecard columns.")
+uploaded_file = st.file_uploader("Select batch file", type=["csv", "xlsx"])
+st.markdown('</div>', unsafe_allow_html=True)
+
+with st.expander("View required input schema", expanded=False):
+    schema_df = pd.DataFrame({"required_column": REQUIRED_BATCH_COLUMNS})
+    st.dataframe(schema_df, use_container_width=True, hide_index=True)
+
+if uploaded_file is not None:
+    try:
+        if uploaded_file.name.lower().endswith(".csv"):
+            batch_df = pd.read_csv(uploaded_file)
+        else:
+            batch_df = pd.read_excel(uploaded_file)
+
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.subheader("Uploaded data preview")
+        st.dataframe(batch_df.head(10), use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        if st.button("Run batch scoring", type="primary"):
+            scored_df, exceptions_df, summary = process_batch(batch_df, rules, REQUIRED_BATCH_COLUMNS)
+
+            write_dataframe(BATCH_SCORED_OUTPUT_FILE, scored_df)
+            write_dataframe(BATCH_EXCEPTION_OUTPUT_FILE, exceptions_df)
+
+            if not scored_df.empty:
+                for _, r in scored_df.iterrows():
+                    existing_store = load_scored_applications(SCORED_APPLICATIONS_FILE)
+                    existing_ids = set(existing_store["application_id"].astype(str).tolist()) if not existing_store.empty else set()
+                    if str(r["application_id"]) not in existing_ids:
+                        append_scored_application(
+                            SCORED_APPLICATIONS_FILE,
+                            {
+                                "application_id": r["application_id"],
+                                "branch": r["branch"],
+                                "officer_name": r["officer_name"],
+                                "age": r["age"],
+                                "monthly_net_income": r["monthly_net_income"],
+                                "employment_type": r["employment_type"],
+                                "employment_tenure_months": r["employment_tenure_months"],
+                                "residence_stability_months": r["residence_stability_months"],
+                                "bureau_flag": r["bureau_flag"],
+                                "existing_obligations_ratio": r["existing_obligations_ratio"],
+                                "account_turnover_strength": r["account_turnover_strength"],
+                                "savings_behaviour": r["savings_behaviour"],
+                                "bvn_verification": r["bvn_verification"],
+                                "bank_account_vintage_months": r["bank_account_vintage_months"],
+                                "notes": "Batch upload",
+                                "total_score": r["total_score"],
+                                "decision": r["decision"],
+                                "risk_band": r["risk_band"],
+                                "reject_reasons": r["reject_reasons"],
+                            },
+                        )
+
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
+            with c1:
+                kpi_card("Rows uploaded", f"{summary['rows_uploaded']:,}")
+            with c2:
+                kpi_card("Rows scored", f"{summary['rows_scored']:,}")
+            with c3:
+                kpi_card("Rows failed", f"{summary['rows_failed']:,}")
+            with c4:
+                kpi_card("Approvals", f"{summary['approvals']:,}")
+            with c5:
+                kpi_card("Referrals", f"{summary['referrals']:,}")
+            with c6:
+                kpi_card("Average score", f"{summary['average_score']}")
+
+            if not scored_df.empty:
+                left, right = st.columns(2)
+                with left:
+                    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+                    st.subheader("Batch decision distribution")
+                    st.plotly_chart(decision_donut(scored_df), use_container_width=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
+                with right:
+                    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+                    st.subheader("Batch score distribution")
+                    st.plotly_chart(score_histogram(scored_df), use_container_width=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+            st.subheader("Scored output")
+            if scored_df.empty:
+                st.info("No valid rows were available for scoring.")
+            else:
+                st.dataframe(scored_df, use_container_width=True)
+                st.download_button(
+                    label="Download scored output CSV",
+                    data=scored_df.to_csv(index=False).encode("utf-8"),
+                    file_name="batch_scored_output.csv",
+                    mime="text/csv",
+                )
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+            st.subheader("Exception report")
+            if exceptions_df.empty:
+                st.success("No row-level exceptions were detected.")
+            else:
+                st.dataframe(exceptions_df, use_container_width=True)
+                st.download_button(
+                    label="Download exception report CSV",
+                    data=exceptions_df.to_csv(index=False).encode("utf-8"),
+                    file_name="batch_exceptions_output.csv",
+                    mime="text/csv",
+                )
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    except Exception as e:
+        st.error(f"Batch processing failed: {str(e)}")
+
+# -------------------------------------------------------------------
+# data/sample_batch_applications.csv
+# -------------------------------------------------------------------
+"""
+application_id,branch,officer_name,age,monthly_net_income,employment_type,employment_tenure_months,residence_stability_months,bureau_flag,existing_obligations_ratio,account_turnover_strength,savings_behaviour,bvn_verification,bank_account_vintage_months
+APP-2001,Lagos Mainland,A. Ajayi,34,180000,Private salaried,30,24,Clean,20,Strong,Regular,Verified and consistent,28
+APP-2002,Ibadan Central,M. Bello,27,85000,Informal business,10,8,Minor issues,34,Moderate,Irregular,Verified and consistent,12
+APP-2003,Abuja South,T. Okonkwo,43,240000,Government salaried,40,36,Clean,16,Strong,Regular,Verified and consistent,45
+APP-2004,Kano Metro,R. Musa,29,95000,Self-employed formal,14,15,Serious delinquency,52,Moderate,Irregular,Verified and consistent,16
+APP-2005,Port Harcourt,G. Uche,35,120000,Private salaried,18,20,No bureau history,28,Moderate,Regular,Verified with minor mismatch,20
+APP-2005,Port Harcourt,G. Uche,35,120000,Private salaried,18,20,No bureau history,28,Moderate,Regular,Verified with minor mismatch,20
+APP-2006,Jos North,H. Danjuma,17,65000,Private salaried,6,7,Clean,15,Low,None observed,Verified and consistent,8
+APP-2007,Enugu East,C. Obi,31,-20000,Private salaried,12,15,Clean,25,Moderate,Regular,Verified and consistent,18
+APP-2008,Benin City,O. Efe,38,150000,Unknown Type,24,20,Clean,18,Strong,Regular,Verified and consistent,22
+APP-2009,Abeokuta,S. Akin,30,110000,Private salaried,18,14,Minor issues,72,Moderate,Irregular,Not verified,15
+"""
+
+# -------------------------------------------------------------------
+# DEPLOYMENT GUIDE (updated)
+# -------------------------------------------------------------------
+"""
+1. Keep all Phase 1 files.
+2. Add services/batch_processor.py.
+3. Add pages/3_Batch_Scoring.py.
+4. Add sample_batch_applications.csv to the data folder.
+5. Update config.py, validators.py, and repository.py with the additions shown above.
+6. Install dependencies:
+   pip install -r requirements.txt
+7. Launch:
+   streamlit run app.py
+"""
+
+# -------------------------------------------------------------------
+# MAINTENANCE GUIDE (updated)
+# -------------------------------------------------------------------
+"""
+1. Keep REQUIRED_BATCH_COLUMNS aligned with the rule-driven application input structure.
+2. Review batch exception files regularly to identify recurring operational data quality issues.
+3. Replace CSV storage with a database table when moving beyond controlled internal usage.
+4. For large files, optimise the append logic and avoid row-by-row persistence in the Streamlit layer.
+5. Add stronger duplicate handling against historical applications in Phase 3 or Phase 4.
+"""
+
+# -------------------------------------------------------------------
+# PHASE 2 ARCHITECTURE DECISIONS
+# -------------------------------------------------------------------
+"""
+1. Batch scoring was implemented as a separate service so the logic is reusable for later API or scheduled workflows.
+2. Schema validation was separated from row-level validation to provide clearer operational error messages.
+3. Exception reporting was built as a first-class output because operational users need to correct bad rows rather than lose the entire file.
+4. Batch results are written to dedicated output files and optionally appended into the central scored application store to keep dashboard analytics current.
+5. CSV and Excel ingestion were both supported because branch and risk teams often work in spreadsheet-based processes.
+"""
+
+# -------------------------------------------------------------------
+# PHASE 2 RISK AND GOVERNANCE CONSIDERATIONS
+# -------------------------------------------------------------------
+"""
+1. Batch uploads can introduce operational risk through malformed files, duplicate records, and inconsistent categorizations, so validation and exception reporting are essential.
+2. The current implementation prevents the whole batch from failing on row-level errors, which is operationally helpful but requires strong review of exception files.
+3. Central storage is still file-based and therefore not yet appropriate for high-concurrency use or tamper-resistant audit requirements.
+4. Duplicate handling is currently limited to within-file duplication and lightweight checks against stored application IDs; more robust entity matching is still needed.
+5. No approval workflow exists yet for batch-triggered decisions; that will be addressed in later phases with override and audit controls.
+"""
+
+# ================================
+# PHASE 3 UPGRADE
+# Override Workflow + Audit Trail + Searchable Decisions
+# Enterprise Credit Decisioning Platform
+# ================================
+
+# -------------------------------------------------------------------
+# PROJECT STRUCTURE
+# -------------------------------------------------------------------
+"""
+credit_decisioning_app/
+│
+├── app.py
+├── config.py
+├── requirements.txt
+│
+├── components/
+│   ├── ui_cards.py
+│   ├── charts.py
+│   └── styles.py
+│
+├── pages/
+│   ├── 1_Dashboard.py
+│   ├── 2_New_Application.py
+│   ├── 3_Batch_Scoring.py
+│   └── 4_Decision_Audit.py
+│
+├── services/
+│   ├── rule_loader.py
+│   ├── scorer.py
+│   ├── validators.py
+│   ├── explainability.py
+│   ├── repository.py
+│   ├── batch_processor.py
+│   ├── audit_logger.py
+│   └── override_service.py
+│
+├── rules/
+│   └── scorecard.yaml
+│
+├── data/
+│   ├── sample_scored_applications.csv
+│   └── sample_batch_applications.csv
+│
+└── outputs/
+    ├── scored_applications.csv
+│   ├── batch_scored_output.csv
+│   ├── batch_exceptions_output.csv
+│   ├── audit_log.csv
+│   └── override_log.csv
+"""
+
+# -------------------------------------------------------------------
+# config.py (additions)
+# -------------------------------------------------------------------
+AUDIT_LOG_FILE = "outputs/audit_log.csv"
+OVERRIDE_LOG_FILE = "outputs/override_log.csv"
+
+USER_ROLES = ["viewer", "scorer", "approver", "admin"]
+AUTHORIZED_OVERRIDE_ROLES = ["approver", "admin"]
+
+# -------------------------------------------------------------------
+# components/ui_cards.py (additions)
+# -------------------------------------------------------------------
+
+def status_banner(message: str, banner_type: str = "info") -> None:
+    if banner_type == "success":
+        st.success(message)
+    elif banner_type == "warning":
+        st.warning(message)
+    elif banner_type == "error":
+        st.error(message)
+    else:
+        st.info(message)
+
+# -------------------------------------------------------------------
+# services/repository.py (additions)
+# -------------------------------------------------------------------
+
+def ensure_named_store(path: str, columns: list[str]) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if not os.path.exists(path):
+        pd.DataFrame(columns=columns).to_csv(path, index=False)
+
+
+def load_table(path: str, columns: list[str]) -> pd.DataFrame:
+    ensure_named_store(path, columns)
+    return pd.read_csv(path)
+
+
+def append_row(path: str, row: Dict[str, Any], columns: list[str]) -> None:
+    ensure_named_store(path, columns)
+    aligned = {col: row.get(col, "") for col in columns}
+    pd.DataFrame([aligned]).to_csv(path, mode="a", index=False, header=False)
+
+# -------------------------------------------------------------------
+# services/audit_logger.py
+# -------------------------------------------------------------------
+import json
+from datetime import datetime
+from typing import Dict, Any
+from services.repository import append_row
+from config import AUDIT_LOG_FILE
+
+AUDIT_COLUMNS = [
+    "audit_id",
+    "event_timestamp",
+    "event_type",
+    "application_id",
+    "user_name",
+    "user_role",
+    "scorecard_version",
+    "original_decision",
+    "final_decision",
+    "risk_band",
+    "total_score",
+    "reject_reasons",
+    "override_flag",
+    "override_reason",
+    "input_payload_json",
+    "component_scores_json",
+    "notes",
+]
+
+
+def log_scoring_event(application: Dict[str, Any], result: Dict[str, Any], user_name: str, user_role: str, scorecard_version: str) -> None:
+    audit_row = {
+        "audit_id": f"AUD-{application['application_id']}-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        "event_timestamp": datetime.now().isoformat(timespec="seconds"),
+        "event_type": "score_application",
+        "application_id": application["application_id"],
+        "user_name": user_name,
+        "user_role": user_role,
+        "scorecard_version": scorecard_version,
+        "original_decision": result["decision"],
+        "final_decision": result["decision"],
+        "risk_band": result["risk_band"],
+        "total_score": result["total_score"],
+        "reject_reasons": " | ".join(result["reject_reasons"]),
+        "override_flag": "No",
+        "override_reason": "",
+        "input_payload_json": json.dumps(application, default=str),
+        "component_scores_json": json.dumps(result["component_scores"], default=str),
+        "notes": application.get("notes", ""),
+    }
+    append_row(AUDIT_LOG_FILE, audit_row, AUDIT_COLUMNS)
+
+# -------------------------------------------------------------------
+# services/override_service.py
+# -------------------------------------------------------------------
+from datetime import datetime
+from typing import Dict, Any, Tuple
+from services.repository import append_row
+from config import OVERRIDE_LOG_FILE, AUTHORIZED_OVERRIDE_ROLES
+
+OVERRIDE_COLUMNS = [
+    "override_id",
+    "override_timestamp",
+    "application_id",
+    "override_user",
+    "override_user_role",
+    "original_decision",
+    "overridden_decision",
+    "override_reason",
+    "credit_officer_notes",
+]
+
+
+def can_override(user_role: str) -> bool:
+    return user_role in AUTHORIZED_OVERRIDE_ROLES
+
+
+def apply_override(
+    application_id: str,
+    original_decision: str,
+    overridden_decision: str,
+    override_reason: str,
+    override_user: str,
+    override_user_role: str,
+    credit_officer_notes: str = "",
+) -> Tuple[bool, str]:
+    if not can_override(override_user_role):
+        return False, "Current user role is not authorized to perform overrides."
+    if not override_reason.strip():
+        return False, "Override reason is mandatory."
+    if original_decision == overridden_decision:
+        return False, "Override decision must differ from the original decision."
+
+    override_row = {
+        "override_id": f"OVR-{application_id}-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        "override_timestamp": datetime.now().isoformat(timespec="seconds"),
+        "application_id": application_id,
+        "override_user": override_user,
+        "override_user_role": override_user_role,
+        "original_decision": original_decision,
+        "overridden_decision": overridden_decision,
+        "override_reason": override_reason.strip(),
+        "credit_officer_notes": credit_officer_notes,
+    }
+    append_row(OVERRIDE_LOG_FILE, override_row, OVERRIDE_COLUMNS)
+    return True, "Override recorded successfully."
+
+# -------------------------------------------------------------------
+# pages/2_New_Application.py (replace imports and selected sections)
+# -------------------------------------------------------------------
+import streamlit as st
+import pandas as pd
+from components.styles import inject_global_styles
+from components.ui_cards import page_header, result_summary_card, status_banner
+from components.charts import score_gauge
+from services.rule_loader import load_rules
+from services.validators import validate_application
+from services.scorer import compute_score
+from services.explainability import explain_result
+from services.repository import append_scored_application, load_scored_applications
+from services.audit_logger import log_scoring_event
+from services.override_service import apply_override, can_override
+from config import RULE_FILE, SCORED_APPLICATIONS_FILE, USER_ROLES
+
+st.set_page_config(page_title="New Application", page_icon="🧾", layout="wide")
+inject_global_styles()
+page_header("New Application Scoring", "Capture applicant information, run policy checks, and generate an explainable judgmental credit decision.")
+
+rules = load_rules(RULE_FILE)
+score_vars = rules["score_variables"]
+cutoffs = rules["decision_cutoffs"]
+scorecard_version = rules["metadata"]["version"]
+
+with st.container():
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.caption("Workflow progress")
+    st.progress(50, text="Phase 3: Application scoring, override control, and audit logging")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with st.form("new_application_form"):
+    identity_col1, identity_col2 = st.columns(2)
+    current_user = identity_col1.text_input("Logged-in user name", value="risk.officer")
+    current_role = identity_col2.selectbox("User role", USER_ROLES, index=1)
+
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "Personal Details",
+        "Income & Employment",
+        "Credit Exposure",
+        "Behaviour & Verification",
+    ])
+
+    with tab1:
+        c1, c2, c3 = st.columns(3)
+        application_id = c1.text_input("Application ID", value="APP-1001", help="Unique reference for the application.")
+        branch = c2.text_input("Branch", value="Lagos Mainland", help="Originating branch or sales location.")
+        officer_name = c3.text_input("Credit officer", value="A. Ajayi", help="Officer handling this case.")
+        age = st.number_input("Age", min_value=18, max_value=75, value=31, help="Applicant age in completed years.")
+        residence_stability_months = st.number_input(
+            "Residence stability (months)", min_value=0, max_value=600, value=18,
+            help="Number of months applicant has stayed at current residence."
+        )
+
+    with tab2:
+        c1, c2 = st.columns(2)
+        monthly_net_income = c1.number_input(
+            "Monthly net income", min_value=0, value=150000, step=5000,
+            help="Net monthly income available after statutory deductions."
+        )
+        employment_type = c2.selectbox(
+            "Employment type", list(score_vars["employment_type"].keys()),
+            help="Primary employment classification used in policy assessment."
+        )
+        employment_tenure_months = st.number_input(
+            "Employment tenure (months)", min_value=0, max_value=600, value=24,
+            help="Duration in current employment or business activity."
+        )
+
+    with tab3:
+        c1, c2 = st.columns(2)
+        bureau_flag = c1.selectbox(
+            "Credit bureau flag", list(score_vars["bureau_flag"].keys()),
+            help="Most severe current bureau interpretation under policy."
+        )
+        existing_obligations_ratio = c2.slider(
+            "Existing obligations ratio (%)", min_value=0, max_value=100, value=25,
+            help="Estimated debt service burden from current obligations."
+        )
+
+    with tab4:
+        c1, c2, c3 = st.columns(3)
+        account_turnover_strength = c1.selectbox(
+            "Account turnover strength", list(score_vars["account_turnover_strength"].keys()),
+            help="Qualitative assessment of banking inflow and activity strength."
+        )
+        savings_behaviour = c2.selectbox(
+            "Savings behaviour", list(score_vars["savings_behaviour"].keys()),
+            help="Observed consistency of savings pattern."
+        )
+        bvn_verification = c3.selectbox(
+            "BVN verification", list(score_vars["bvn_verification"].keys()),
+            help="Outcome of identity verification against BVN records."
+        )
+        bank_account_vintage_months = st.number_input(
+            "Bank account vintage (months)", min_value=0, max_value=600, value=18,
+            help="How long the primary operating bank account has been active."
+        )
+
+    notes = st.text_area("Credit officer notes", help="Optional underwriting context or observations.")
+    submit = st.form_submit_button("Run scorecard")
+
+if submit:
+    application = {
+        "application_id": application_id,
+        "branch": branch,
+        "officer_name": officer_name,
+        "age": age,
+        "monthly_net_income": monthly_net_income,
+        "employment_type": employment_type,
+        "employment_tenure_months": employment_tenure_months,
+        "residence_stability_months": residence_stability_months,
+        "bureau_flag": bureau_flag,
+        "existing_obligations_ratio": existing_obligations_ratio,
+        "account_turnover_strength": account_turnover_strength,
+        "savings_behaviour": savings_behaviour,
+        "bvn_verification": bvn_verification,
+        "bank_account_vintage_months": bank_account_vintage_months,
+        "notes": notes,
+    }
+
+    validation_errors = validate_application(application)
+    if validation_errors:
+        for err in validation_errors:
+            st.error(err)
+    else:
+        existing = load_scored_applications(SCORED_APPLICATIONS_FILE)
+        if not existing.empty and application_id in existing.get("application_id", pd.Series(dtype=str)).astype(str).tolist():
+            st.warning("Duplicate application ID detected. Review whether this is a resubmission or a duplicate entry.")
+
+        result = compute_score(application, rules)
+        explanations = explain_result(result["component_scores"], result["reject_reasons"])
+
+        log_scoring_event(application, result, current_user, current_role, scorecard_version)
+
+        append_scored_application(
+            SCORED_APPLICATIONS_FILE,
+            {
+                **application,
+                "total_score": result["total_score"],
+                "decision": result["decision"],
+                "risk_band": result["risk_band"],
+                "reject_reasons": " | ".join(result["reject_reasons"]),
+            },
+        )
+
+        left, right = st.columns([1.1, 0.9])
+        with left:
+            result_summary_card(
+                result["total_score"],
+                result["decision"],
+                result["risk_band"],
+                result["recommendation"],
+            )
+            st.markdown("<div style='height:0.8rem;'></div>", unsafe_allow_html=True)
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+            st.subheader("Component score breakdown")
+            breakdown_df = pd.DataFrame({
+                "Component": list(result["component_scores"].keys()),
+                "Points": list(result["component_scores"].values()),
+            })
+            st.dataframe(breakdown_df, use_container_width=True, hide_index=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with right:
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+            st.subheader("Score visualization")
+            st.plotly_chart(
+                score_gauge(result["total_score"], cutoffs["approve"], cutoffs["refer"]),
+                use_container_width=True,
+            )
+            st.markdown("<p class='small-note'>Green indicates approval zone, amber indicates referral zone, and red indicates decline zone.</p>", unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+            st.subheader("Positive drivers")
+            for item in explanations["positive_factors"]:
+                st.write(f"• {item}")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with c2:
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+            st.subheader("Policy flags and constraints")
+            for item in explanations["policy_flags"]:
+                st.write(f"• {item}")
+            if explanations["negative_factors"]:
+                st.markdown("<div style='height:0.4rem;'></div>", unsafe_allow_html=True)
+                st.caption("Negative contributors")
+                for item in explanations["negative_factors"]:
+                    st.write(f"• {item}")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        if result["decision"] == "Approve":
+            status_banner("Application meets current policy threshold and may proceed to the next stage of approval workflow.", "success")
+        elif result["decision"] == "Refer":
+            status_banner("Application requires manual review before final credit action is taken.", "warning")
+        else:
+            status_banner("Application should be declined under the current policy unless an exceptional governance process applies.", "error")
+
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.subheader("Override workflow")
+        st.caption("Only approver and admin roles may record overrides. Every override requires a mandatory reason.")
+        override_allowed = can_override(current_role)
+        override_decision = st.selectbox("Override decision", ["Approve", "Refer", "Decline"], index=["Approve", "Refer", "Decline"].index(result["decision"]))
+        override_reason = st.text_area("Override reason", help="Explain why the original scorecard decision should be changed.")
+        if st.button("Record override", disabled=not override_allowed):
+            success, message = apply_override(
+                application_id=application_id,
+                original_decision=result["decision"],
+                overridden_decision=override_decision,
+                override_reason=override_reason,
+                override_user=current_user,
+                override_user_role=current_role,
+                credit_officer_notes=notes,
+            )
+            if success:
+                status_banner(message, "success")
+            else:
+                status_banner(message, "error")
+        if not override_allowed:
+            st.info("Current role is read-only for overrides. Switch role to approver or admin to test override workflow.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+# -------------------------------------------------------------------
+# pages/4_Decision_Audit.py
+# -------------------------------------------------------------------
+import streamlit as st
+import pandas as pd
+from components.styles import inject_global_styles
+from components.ui_cards import page_header, kpi_card, decision_badge
+from services.repository import load_table
+from services.audit_logger import AUDIT_COLUMNS
+from services.override_service import OVERRIDE_COLUMNS
+from config import AUDIT_LOG_FILE, OVERRIDE_LOG_FILE
+
+st.set_page_config(page_title="Decision Audit", page_icon="🛡️", layout="wide")
+inject_global_styles()
+page_header("Decision Audit & Search", "Search scored decisions, inspect audit records, and review overrides for governance control.")
+
+audit_df = load_table(AUDIT_LOG_FILE, AUDIT_COLUMNS)
+overrides_df = load_table(OVERRIDE_LOG_FILE, OVERRIDE_COLUMNS)
+
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    kpi_card("Audit events", f"{len(audit_df):,}")
+with c2:
+    kpi_card("Overrides", f"{len(overrides_df):,}")
+with c3:
+    approvals = int((audit_df["final_decision"] == "Approve").sum()) if not audit_df.empty else 0
+    kpi_card("Audited approvals", f"{approvals:,}")
+with c4:
+    declines = int((audit_df["final_decision"] == "Decline").sum()) if not audit_df.empty else 0
+    kpi_card("Audited declines", f"{declines:,}")
+
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
+st.subheader("Search historical decisions")
+search_application = st.text_input("Search by application ID")
+search_user = st.text_input("Search by user name")
+decision_filter = st.multiselect("Filter by final decision", ["Approve", "Refer", "Decline"], default=["Approve", "Refer", "Decline"])
+st.markdown('</div>', unsafe_allow_html=True)
+
+filtered_audit = audit_df.copy()
+if not filtered_audit.empty:
+    if search_application.strip():
+        filtered_audit = filtered_audit[filtered_audit["application_id"].astype(str).str.contains(search_application.strip(), case=False, na=False)]
+    if search_user.strip():
+        filtered_audit = filtered_audit[filtered_audit["user_name"].astype(str).str.contains(search_user.strip(), case=False, na=False)]
+    filtered_audit = filtered_audit[filtered_audit["final_decision"].isin(decision_filter)]
+
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
+st.subheader("Audit trail")
+if filtered_audit.empty:
+    st.info("No audit records found for the selected filters.")
+else:
+    audit_display = filtered_audit[[
+        "event_timestamp", "application_id", "user_name", "user_role", "scorecard_version",
+        "original_decision", "final_decision", "risk_band", "total_score", "override_flag", "override_reason"
+    ]].copy()
+    audit_display["final_decision"] = audit_display["final_decision"].apply(lambda x: decision_badge(x))
+    st.write(audit_display.to_html(escape=False, index=False), unsafe_allow_html=True)
+    st.download_button(
+        label="Download filtered audit log CSV",
+        data=filtered_audit.to_csv(index=False).encode("utf-8"),
+        file_name="filtered_audit_log.csv",
+        mime="text/csv",
+    )
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
+st.subheader("Override register")
+if overrides_df.empty:
+    st.info("No overrides have been recorded yet.")
+else:
+    st.dataframe(overrides_df.sort_values("override_timestamp", ascending=False), use_container_width=True)
+    st.download_button(
+        label="Download override log CSV",
+        data=overrides_df.to_csv(index=False).encode("utf-8"),
+        file_name="override_log.csv",
+        mime="text/csv",
+    )
+st.markdown('</div>', unsafe_allow_html=True)
+
+# -------------------------------------------------------------------
+# DEPLOYMENT GUIDE (updated)
+# -------------------------------------------------------------------
+"""
+1. Keep all Phase 1 and Phase 2 files.
+2. Add services/audit_logger.py and services/override_service.py.
+3. Add pages/4_Decision_Audit.py.
+4. Update config.py, repository.py, ui_cards.py, and pages/2_New_Application.py with the additions shown above.
+5. Launch:
+   streamlit run app.py
+6. Test with a scorer role and then with an approver role to confirm override permissions behave correctly.
+"""
+
+# -------------------------------------------------------------------
+# MAINTENANCE GUIDE (updated)
+# -------------------------------------------------------------------
+"""
+1. Audit and override files should be backed up and access-controlled because they form part of governance evidence.
+2. The current audit log is append-based and human-readable; later phases should make it immutable and database-backed.
+3. Search filters should be expanded in later phases to include date ranges, branch, and officer identifiers.
+4. Override reasons should be reviewed periodically by risk management to monitor policy drift and underwriter behaviour.
+5. Before production use, authentication and digital signatures should be added to strengthen accountability.
+"""
+
+# -------------------------------------------------------------------
+# PHASE 3 ARCHITECTURE DECISIONS
+# -------------------------------------------------------------------
+"""
+1. Audit logging was implemented as a separate service to preserve traceability independently of the UI workflow.
+2. Override capture was separated into its own service because it is a governance action, not a scoring calculation.
+3. Role authorization was introduced as a lightweight placeholder to prepare the app for later authentication and role-based access control.
+4. A dedicated decision-audit page was added so governance users can search and export records without interacting with the scoring workflow.
+5. File-backed logs remain simple for internal prototyping, but the service boundaries make migration to SQL or an event store straightforward.
+"""
+
+# -------------------------------------------------------------------
+# PHASE 3 RISK AND GOVERNANCE CONSIDERATIONS
+# -------------------------------------------------------------------
+"""
+1. Overrides are powerful governance events and must never be allowed without mandatory rationale and role restriction.
+2. The current role model is illustrative only and is not a substitute for real identity and access management.
+3. Audit logs are currently appendable files, which is operationally convenient but not fully tamper-resistant.
+4. Scoring and override records should eventually be reconciled so the final decision state is visible in one canonical store.
+5. Frequent overrides may indicate poor scorecard calibration, policy ambiguity, or weak frontline data capture and should therefore be monitored.
+"""
+
+# -------------------------------------------------------------------
+# ROADMAP TO ENTERPRISE CREDIT DECISION ENGINE
+# -------------------------------------------------------------------
+"""
+Phase 4:
+- Advanced analytics page
+- Decline reason frequency
+- Approval rates by branch and bureau category
+- Portfolio monitoring hooks
+
+Phase 5:
+- Admin policy page
+- Scorecard upload and validation
+- Version comparison
+- Role placeholders and governance controls
+
+Phase 6:
+- Database backend
+- Authentication and authorization
+- API layer with FastAPI
+- Integration with loan origination or core banking systems
 """
